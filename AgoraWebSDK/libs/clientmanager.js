@@ -20,8 +20,6 @@ class ClientManager {
     this.is_screensharing = false;
     this.tempLocalTracks = null;
     this.enableLoopbackAudio = false;
-    this.virtualBackgroundProcessor = null;
-    this.spatialAudio = undefined;
     this._customVideoConfiguration = {
       bitrateMax:undefined,
       bitrateMin:undefined,
@@ -39,15 +37,12 @@ class ClientManager {
     this.userVolumeHandle = this.handleVolumeIndicator.bind(this);
     this.userStreamHandle = this.handleStreamMessage.bind(this);
     this.userInfoUpdateHandler = this.handleUserInfoUpdate.bind(this);
-    this.userTokenWillExpireHandle = this.handleTokenPrivilegeWillExpire.bind(this);
-    this.userTokenDidExpireHandle = this.handleTokenPrivilegeDidExpire.bind(this);
   }
 
   manipulate() {}
 
   setVideoEnabled(enabled) {
-    // not publishing if it is Live Audience
-    this.videoEnabled = this.client_role == 2 ? false : enabled;
+    this.videoEnabled = enabled;
     this.videoSubscribing = enabled;
   }
 
@@ -197,11 +192,6 @@ class ClientManager {
   // see the event raised in subscribe_remoteuser instead
   handleUserJoined(user, mediaType) {
     const id = user.uid;
-    console.log("remote user id" , id);
-
-    if(this.spatialAudio !== undefined && this.spatialAudio.enabled === true){
-      this.enableSpatialAudio(true, user);
-    }
   }
 
   handleUserUnpublished(user, mediaType) {
@@ -222,10 +212,6 @@ class ClientManager {
       rcode = 1; //DROPPED
     } else if (reason === "BecomeAudience") {
       rcode = 2;
-    }
-
-    if(this.spatialAudio !== undefined){
-      this.spatialAudio.localPlayerStop(user);
     }
 
     event_manager.raiseOnRemoteUserLeaved(strUID, rcode); 
@@ -305,11 +291,7 @@ class ClientManager {
       }
     }
 
-    console.log(this.spatialAudio);
 
-    if(this.spatialAudio !== undefined){
-      this.spatialAudio.localPlayerStopAll();
-    }
 
     if(this.screenShareClient && this.screenShareClient.uid != null){
       this.handleUserLeft(this.screenShareClient);
@@ -418,14 +400,6 @@ class ClientManager {
     stopNewScreenCaptureForWeb();
   }
 
-  async handleTokenPrivilegeWillExpire(){
-    event_manager.raiseOnTokenPrivilegeWillExpire(this.options.token)
-  }
-
-  async handleTokenPrivilegeDidExpire(){
-    event_manager.raiseOnTokenPrivilegeDidExpire(this.options.token)
-  }
-
   //============================================================================== 
   // . JOIN CHANNEL METHOD 
   // Params: user - can be either string or uint
@@ -449,8 +423,6 @@ class ClientManager {
     this.client.on("user-info-updated", this.userInfoUpdateHandler);
     this.client.on("volume-indicator", this.userVolumeHandle);
     this.client.on("stream-message", this.userStreamHandle);
-    this.client.on("token-privilege-will-expire", this.userTokenWillExpireHandle);
-    this.client.on("token-privilege-did-expire", this.userTokenDidExpireHandle);
 
     if (typeof(user) == "string") {
 	    user = 0; // let system assign uid
@@ -825,9 +797,9 @@ class ClientManager {
         [localTracks.videoTrack] = screenShareTrack;
         localTracks.videoTrack.on("track-ended", this.handleStopScreenShare.bind());
         localTracks.videoTrack.play("local-player");
-        this.tempLocalTracks = screenShareTrack;
-        await this.client.publish(this.tempLocalTracks[0]);
-        await this.client.publish(this.tempLocalTracks[1]);
+        this.tempLocalTracks.audioTrack = screenShareTrack;
+        await this.client.publish(localTracks.videoTrack);
+        await this.client.publish(this.tempLocalTracks.audioTrack);
         this.enableLoopbackAudio = true;
         event_manager.raiseScreenShareStarted(this.options.channel, this.options.uid);
       } else {
@@ -876,20 +848,14 @@ class ClientManager {
   // Stop screen sharing.
   async stopScreenCapture() {
     if (this.is_screensharing) {
-      
-        localTracks.videoTrack.stop();
-        localTracks.videoTrack.close();
-        await this.client.unpublish(localTracks.videoTrack);
-      
+      localTracks.videoTrack.stop();
+      localTracks.videoTrack.close();
+      await this.client.unpublish(localTracks.videoTrack);
       this.is_screensharing = false;
       this.enableLoopbackAudio = false;
       if (this.tempLocalTracks != null) {
-        for (var x = 0; x < this.tempLocalTracks.length; x++) {
-          this.tempLocalTracks[x].stop();
-          this.tempLocalTracks[x].close();
-          await this.client.unpublish(this.tempLocalTracks[x]);
-        }
-        this.tempLocalTracks = null;
+        await this.client.unpublish(this.tempLocalTracks.audioTrack);
+        this.tempLocalTracks.audioTrack = null;
       }
       if (this.videoEnabled) {
         [localTracks.videoTrack] = await Promise.all([
@@ -910,12 +876,6 @@ class ClientManager {
   async startNewScreenCaptureForWeb(uid, enableAudio) {
     var screenShareTrack = null;
     var enableAudioStr = enableAudio? "auto" : "disable";
-    var screenShareUID = uid;
-    if(remoteUsers[screenShareUID] !== undefined){
-      screenShareTrack = null;
-      event_manager.raiseHandleUserError(-1, "Screen Share Client Error: ID is already in use!");
-      return;
-    }
     if (!this.is_screensharing) {
       this.screenShareClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
       AgoraRTC.createScreenVideoTrack({
@@ -927,8 +887,7 @@ class ClientManager {
         screenShareTrack = localVideoTrack;
         screenShareTrack[0].on("track-ended", this.handleStopNewScreenShare.bind());
         this.enableLoopbackAudio = enableAudio;
-        this.tempLocalTracks = screenShareTrack;
-        this.screenShareClient.join(this.options.appid, this.options.channel, null, uid).then(u => {
+        this.screenShareClient.join(this.options.appid, this.options.channel, null, uid + this.client.uid).then(u => {
           this.screenShareClient.publish(screenShareTrack);
           event_manager.raiseScreenShareStarted(this.options.channel, this.options.uid);
         });
@@ -936,15 +895,13 @@ class ClientManager {
         this.is_screensharing = true;
         screenShareTrack = localVideoTrack;
         screenShareTrack.on("track-ended", this.handleStopNewScreenShare.bind());
-        this.tempLocalTracks = screenShareTrack;
         this.enableLoopbackAudio = enableAudio;
-        this.screenShareClient.join(this.options.appid, this.options.channel, null, uid).then(u => {
+        this.screenShareClient.join(this.options.appid, this.options.channel, null, uid + this.client.uid).then(u => {
           this.screenShareClient.publish(screenShareTrack);
           event_manager.raiseScreenShareStarted(this.options.channel, this.options.uid);
         });
       }
       }).catch(error => { 
-        console.log(error);
         event_manager.raiseScreenShareCanceled(this.options.channel, this.options.uid);
     });
     } else {
@@ -954,26 +911,11 @@ class ClientManager {
 
   async stopNewScreenCaptureForWeb() {
     if (this.is_screensharing) {
-      if (this.tempLocalTracks !== null) {
-        if (Array.isArray(this.tempLocalTracks)) {
-          for (var i = 0; i < this.tempLocalTracks.length; i++) {
-            this.tempLocalTracks[i].stop();
-            this.tempLocalTracks[i].close();
-            this.screenShareClient.unpublish(this.tempLocalTracks[i]);
-          }
-        } else {
-          console.log(this.tempLocalTracks);
-          this.tempLocalTracks.stop();
-          this.tempLocalTracks.close();
-          this.screenShareClient.unpublish(this.tempLocalTracks);
-        }
-      }
 
-      
-      this.screenShareClient.leave();
+      if(this.screenShareClient)
+        this.screenShareClient.leave();
 
       this.is_screensharing = false;
-      this.tempLocalTracks = undefined;
       if(localTracks.audioTrack) {
         this.client.publish(localTracks.audioTrack);
       }
@@ -1056,32 +998,6 @@ class ClientManager {
     }
   }
 
-async enableVirtualBackground(enabled, backgroundSourceType, color, source, blurDegree, mute, loop){
-  if(this.virtualBackgroundProcessor == null && localTracks.videoTrack){
-    console.log("getting virtual background", localTracks.videoTrack);
-    this.virtualBackgroundProcessor = await getVirtualBackgroundProcessor(localTracks.videoTrack, enabled, backgroundSourceType, color, source, blurDegree, mute, loop);
-  } else if(this.virtualBackgroundProcessor != null) {
-    console.log("setting virtual background", localTracks.videoTrack);
-    this.virtualBackgroundProcessor = await setVirtualBackgroundProcessor(this.virtualBackgroundProcessor, localTracks.videoTrack, enabled, backgroundSourceType, color, source, blurDegree, mute, loop);
-  }
-}
-
-async setVirtualBackgroundBlur(blurDegree){
-  setBackgroundBlurring(localTracks.videoTrack, blurDegree);
-}
-
-async setVirtualBackgroundColor(hexColor){
-  setBackgroundColor(localTracks.videoTrack, hexColor);
-}
-
-async setVirtualBackgroundImage(imgFile){
-  setBackgroundImage(localTracks.videoTrack, imgFile);
-}
-
-async setVirtualBackgroundVideo(videoFile){
-  setBackgroundVideo(localTracks.videoTrack, videoFile);
-}
-
   SetRemoteUserPriority(uid, userPriority) {
     if (userPriority == 50 || userPriority == 0)
       this.client.setRemoteVideoStreamType(uid, 0);
@@ -1139,26 +1055,5 @@ async setVirtualBackgroundVideo(videoFile){
         event_manager.raiseOnClientVideoSizeChanged(uid, width, height);
       }
     }, 2000);
-  }
-
-  async enableSpatialAudio(enabled, client = this.client){
-    
-    if(client.uid === this.client.uid){
-      if(this.spatialAudio == undefined){
-        this.spatialAudio = window.createSpatialAudioManager();
-      }
-    } else {
-      await this.spatialAudio.getRemoteUserSpatialAudioProcessor(client, enabled);
-    }
-  }
-
-  async setRemoteUserSpatialAudioParams(uid, azimuth, elevation, distance, orientation, attenuation, blur, airAbsorb){
-     this.spatialAudio.updateSpatialAzimuth(uid, azimuth);
-     this.spatialAudio.updateSpatialElevation(uid, elevation);
-     this.spatialAudio.updateSpatialDistance(uid, distance);
-     this.spatialAudio.updateSpatialOrientation(uid, orientation);
-     this.spatialAudio.updateSpatialAttenuation(uid, attenuation);
-     this.spatialAudio.updateSpatialBlur(uid, blur);
-     this.spatialAudio.updateSpatialAirAbsorb(uid, airAbsorb);
   }
 }
