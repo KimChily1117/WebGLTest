@@ -7,8 +7,7 @@
 	<title>TEST Unity WebGL Player | VirtualOffice</title>
 	<link rel="shortcut icon" href="TemplateData/favicon.ico">
 	<link rel="stylesheet" href="TemplateData/style.css">
-	<script src="AgoraWebSDK/libs/agora-extension-virtual-background.js"></script>
-	<script src="AgoraWebSDK/libs/virtualbackground.js"></script>
+
 	<script src="AgoraWebSDK/libs/databuilder.js"></script>
 	<script src="AgoraWebSDK/libs/clientmanager.js"></script>
 	<script src="AgoraWebSDK/libs/wglwrapper.js"></script>
@@ -26,7 +25,6 @@
 	<script src="AgoraWebSDK/agorartcenginev2.js"></script>
 	<script src="AgoraWebSDK/vendor/materialize.min.js"></script>
 	<script src="AgoraRTC_N.js"></script>
-	<script src="AgoraWebSDK/libs/spatial-audio-main.js" type="module"></script>
 	<script src="AgoraWebSDK/vendor/jquery.min.js"></script>
 
 </head>
@@ -81,11 +79,11 @@
 		var angle = 0;
 
 		var buildUrl = "Build";
-		var loaderUrl = buildUrl + "/WebGL.loader.js";
+		var loaderUrl = buildUrl + "/AgoraRTC_N.loader.js";
 		var config = {
-			dataUrl: buildUrl + "/WebGL.data.unityweb",
-			frameworkUrl: buildUrl + "/WebGL.framework.js.unityweb",
-			codeUrl: buildUrl + "/WebGL.wasm.unityweb",
+			dataUrl: buildUrl + "/AgoraRTC_N.data.unityweb",
+			frameworkUrl: buildUrl + "/AgoraRTC_N.framework.js.unityweb",
+			codeUrl: buildUrl + "/AgoraRTC_N.wasm.unityweb",
         streamingAssetsUrl: "StreamingAssets",
 			companyName: "Pineone",
 			productName: "VirtualOffice",
